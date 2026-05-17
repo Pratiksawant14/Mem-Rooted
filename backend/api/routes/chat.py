@@ -22,7 +22,7 @@ from core.extraction import CandidateType, ExtractionResult, MemoryCandidate, ex
 from core.operations import add_node, create_lateral_link, noop, update_node
 from core.placement import PlacementEngine
 from core.retrieval import HybridRetriever, RetrievalResult
-from db.connection import get_db
+from db.connection import get_session
 from db.models import Message, Node, NodeType, Session
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ async def send_message(body: ChatRequest, request: Request):
     placement: PlacementEngine = request.app.state.placement_engine
     emb_model = request.app.state.embedding_model
 
-    async with get_db() as db:
+    async with get_session() as db:
         session = await _get_or_create_session(db, body.session_id)
         session_uuid = uuid.UUID(body.session_id)
 
@@ -332,7 +332,7 @@ async def send_message(body: ChatRequest, request: Request):
 
         async def _preload():
             try:
-                async with get_db() as preload_db:
+                async with get_session() as preload_db:
                     await retriever.preload_next_scene(last_msgs, graph, preload_db, body.session_id)
             except Exception as e:
                 logger.warning(f"[Chat] Preload failed: {e}")
@@ -379,7 +379,7 @@ async def send_message(body: ChatRequest, request: Request):
 @router.get("/sessions")
 async def list_sessions():
     """List all conversation sessions."""
-    async with get_db() as db:
+    async with get_session() as db:
         result = await db.execute(
             select(Session).order_by(Session.started_at.desc()).limit(50)
         )
@@ -402,7 +402,7 @@ async def list_sessions():
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str):
     """Get all messages for a session in chronological order."""
-    async with get_db() as db:
+    async with get_session() as db:
         result = await db.execute(
             select(Message)
             .where(Message.session_id == uuid.UUID(session_id))

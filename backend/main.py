@@ -12,7 +12,11 @@ Wires all engines into a running HTTP server:
 
 import logging
 import sys
+import os
 from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware

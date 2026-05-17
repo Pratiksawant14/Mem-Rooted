@@ -39,6 +39,9 @@ engine: AsyncEngine = create_async_engine(
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     pool_pre_ping=True,
     echo=False,
+    connect_args={
+        "server_settings": {"jit": "off"}
+    }
 )
 
 # ── Session Factory ───────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.retrieval import HybridRetriever
 from core.scheduler import SchedulerState
-from db.connection import get_db
+from db.connection import get_session
 from db.models import Node, NodeType, PriorityFlag
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ async def get_memory_tree():
     Full node tree as nested JSON.
     ANCHOR nodes at root, children nested recursively.
     """
-    async with get_db() as db:
+    async with get_session() as db:
         result = await db.execute(
             select(Node).where(Node.is_archived == False).order_by(Node.tier_level.asc())
         )
@@ -104,7 +104,7 @@ async def get_memory_tree():
 @router.get("/node/{node_id}")
 async def get_node_detail(node_id: str):
     """Full node details including complete operation_log history."""
-    async with get_db() as db:
+    async with get_session() as db:
         result = await db.execute(select(Node).where(Node.id == uuid.UUID(node_id)))
         node = result.scalar_one_or_none()
 
@@ -158,7 +158,7 @@ async def get_memory_stats():
     - Top 5 by composite weight
     - Top 5 by recall weight
     """
-    async with get_db() as db:
+    async with get_session() as db:
         # Total nodes by type
         type_counts = {}
         for nt in NodeType:
@@ -293,7 +293,7 @@ async def archive_node_endpoint(node_id: str):
     Soft-archive a node (set is_archived=True). Never hard deletes.
     Blocks if node is ANCHOR with IMMUTABLE priority.
     """
-    async with get_db() as db:
+    async with get_session() as db:
         result = await db.execute(select(Node).where(Node.id == uuid.UUID(node_id)))
         node = result.scalar_one_or_none()
 
@@ -332,7 +332,7 @@ async def search_memories(request: Request, q: str = Query(..., min_length=2)):
     graph = request.app.state.graph
     retriever: HybridRetriever = request.app.state.retriever
 
-    async with get_db() as db:
+    async with get_session() as db:
         retrieval = await retriever.retrieve(
             query=q,
             db=db,
