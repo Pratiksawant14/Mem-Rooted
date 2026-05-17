@@ -305,7 +305,10 @@ async def send_message(body: ChatRequest, request: Request):
 
         # ── 7. LLM response ─────────────────────────────────────────────
         from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+        client = AsyncOpenAI(
+            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            api_key=os.getenv("OPENAI_API_KEY", "")
+        )
         model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
         try:
