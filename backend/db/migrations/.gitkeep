@@ -1,0 +1,3 @@
+# Mem-Rooted — Database Migrations
+# This directory holds Alembic migration scripts.
+# Initialize with: alembic init migrations

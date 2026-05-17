@@ -1,0 +1,44 @@
+# Mem-Rooted Backend Dependencies
+# ─────────────────────────────────
+
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Async PostgreSQL
+asyncpg==0.30.0
+sqlalchemy[asyncio]==2.0.36
+alembic==1.14.0
+
+# pgvector support
+pgvector==0.3.6
+
+# Embeddings (local, CPU)
+sentence-transformers==3.3.1
+numpy==1.26.4
+
+# LLM (response generation + structured extraction)
+openai==1.58.1
+
+# In-memory graph
+networkx==3.4.2
+
+# BM25 keyword search
+rank-bm25==0.2.2
+
+# NLP / NER
+spacy==3.7.6
+
+# Background jobs
+apscheduler==3.10.4
+
+# Data validation & settings
+pydantic==2.10.3
+pydantic-settings==2.7.0
+
+# Environment
+python-dotenv==1.0.1
+
+# HTTP client
+httpx==0.28.1

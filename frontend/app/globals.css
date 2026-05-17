@@ -1,0 +1,176 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* ── Surfaces ──────────────────────────────────────── */
+  --bg: #0a0a0f;
+  --surface: #111118;
+  --surface-elevated: #1a1a24;
+  --border: #2a2a3a;
+
+  /* ── Primary Accent ────────────────────────────────── */
+  --primary: #7c6af7;
+  --primary-hover: #8d7df8;
+  --primary-glow: #7c6af740;
+  --primary-dim: #7c6af720;
+
+  /* ── Text ──────────────────────────────────────────── */
+  --text-primary: #f0f0ff;
+  --text-secondary: #8888aa;
+  --text-muted: #55556a;
+
+  /* ── Node Type Colors ──────────────────────────────── */
+  --anchor: #f7c96a;
+  --domain: #6af7c9;
+  --cluster: #6aaff7;
+  --instance: #a06af7;
+
+  /* ── Decay Status ──────────────────────────────────── */
+  --decay-healthy: #6af77a;
+  --decay-warning: #f7d06a;
+  --decay-critical: #f76a6a;
+
+  /* ── Misc ──────────────────────────────────────────── */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 16px;
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Base ──────────────────────────────────────────────── */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary-dim);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-glow);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-dim) transparent;
+}
+
+/* ── Selection ─────────────────────────────────────────── */
+
+::selection {
+  background: var(--primary-glow);
+  color: var(--text-primary);
+}
+
+/* ── Utility Classes ───────────────────────────────────── */
+
+.glass {
+  background: rgba(17, 17, 24, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+}
+
+.glass-elevated {
+  background: rgba(26, 26, 36, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+}
+
+.glow-primary {
+  box-shadow: 0 0 20px var(--primary-glow), 0 0 60px var(--primary-dim);
+}
+
+.node-anchor { color: var(--anchor); }
+.node-domain { color: var(--domain); }
+.node-cluster { color: var(--cluster); }
+.node-instance { color: var(--instance); }
+
+.dot-anchor { background: var(--anchor); }
+.dot-domain { background: var(--domain); }
+.dot-cluster { background: var(--cluster); }
+.dot-instance { background: var(--instance); }
+
+.decay-healthy { color: var(--decay-healthy); }
+.decay-warning { color: var(--decay-warning); }
+.decay-critical { color: var(--decay-critical); }
+
+.dot-decay-healthy { background: var(--decay-healthy); }
+.dot-decay-warning { background: var(--decay-warning); }
+.dot-decay-critical { background: var(--decay-critical); }
+
+/* ── Interactive ───────────────────────────────────────── */
+
+button, a, [role="button"] {
+  transition: all var(--transition);
+}
+
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ── Input ─────────────────────────────────────────────── */
+
+textarea, input {
+  font-family: inherit;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+}
+
+textarea::placeholder, input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ── Animations ────────────────────────────────────────── */
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px var(--primary-dim); }
+  50% { box-shadow: 0 0 20px var(--primary-glow); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
