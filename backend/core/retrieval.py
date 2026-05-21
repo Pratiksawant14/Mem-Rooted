@@ -384,6 +384,7 @@ class HybridRetriever:
         query: str,
         db: AsyncSession,
         graph: MemoryGraph,
+        user_id: str,
         session_id: Optional[str] = None,
     ) -> RetrievalResult:
         """
@@ -393,7 +394,8 @@ class HybridRetriever:
         ctx = self.prepare_query(query)
 
         # ── Load nodes from DB ───────────────────────────────────────────
-        result = await db.execute(select(Node).where(Node.is_archived == False))
+        import uuid
+        result = await db.execute(select(Node).where(Node.is_archived == False, Node.user_id == uuid.UUID(user_id)))
         db_nodes = list(result.scalars().all())
 
         # Convert to dicts for channel processing
@@ -545,6 +547,7 @@ class HybridRetriever:
         last_3_messages: list[str],
         graph: MemoryGraph,
         db: AsyncSession,
+        user_id: str,
         session_id: str,
     ) -> list[str]:
         """
@@ -561,7 +564,8 @@ class HybridRetriever:
         query_embedding = _embed_text(combined)
 
         # Load active nodes
-        result = await db.execute(select(Node).where(Node.is_archived == False))
+        import uuid
+        result = await db.execute(select(Node).where(Node.is_archived == False, Node.user_id == uuid.UUID(user_id)))
         db_nodes = list(result.scalars().all())
 
         node_dicts = []

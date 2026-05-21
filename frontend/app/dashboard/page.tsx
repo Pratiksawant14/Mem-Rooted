@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { getMemoryStats, getSchedulerStatus, MemoryStats, SchedulerStatus } from "@/lib/api";
 import OverviewView from "@/components/dashboard/OverviewView";
@@ -62,10 +64,23 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<MemoryStats | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
 
+  const router = useRouter();
+  const [username, setUsername] = useState<string | null>(null);
+
   useEffect(() => {
+    const userId = localStorage.getItem("mem_user_id");
+    const uname = localStorage.getItem("mem_username");
+    if (!userId) {
+      router.push("/login");
+    } else {
+      setUsername(uname);
+    }
+    
     getMemoryStats().then(setStats).catch(() => {});
     getSchedulerStatus().then(setSchedulerStatus).catch(() => {});
-  }, []);
+  }, [router]);
+
+  if (!username) return null;
 
   // Derive last run
   let lastRunLabel = "—";
@@ -91,9 +106,16 @@ export default function DashboardPage() {
         style={{ width: 220 }}
       >
         {/* Logo */}
-        <div className="px-5 py-5">
-          <h1 className="text-base font-semibold text-primary tracking-tight">Mem-Rooted</h1>
-          <p className="text-[10px] text-text-muted mt-0.5">Memory Dashboard</p>
+        <div className="px-5 py-5 border-b border-border mb-2">
+          <Link href="/" className="hover:opacity-80 transition-opacity block mb-3">
+            <h1 className="text-base font-semibold text-primary tracking-tight">Mem-Rooted</h1>
+            <p className="text-[10px] text-text-muted mt-0.5">← Back to Chat</p>
+          </Link>
+          <div className="flex items-center justify-between">
+            <div className="px-2 py-1 rounded bg-surface-elevated text-xs text-text-secondary border border-border">
+              <span className="text-primary mr-1">●</span> {username}
+            </div>
+          </div>
         </div>
 
         {/* Nav */}

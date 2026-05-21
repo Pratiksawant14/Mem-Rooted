@@ -8,6 +8,16 @@ const api = axios.create({
   timeout: 30000,
 });
 
+api.interceptors.request.use((config) => {
+  if (typeof window !== "undefined") {
+    const userId = localStorage.getItem("mem_user_id");
+    if (userId) {
+      config.headers["x-user-id"] = userId;
+    }
+  }
+  return config;
+});
+
 /* ═══════════════════════════════════════════════════════════════════════════
    TypeScript Interfaces (matching backend response shapes exactly)
    ═══════════════════════════════════════════════════════════════════════════ */

@@ -22,7 +22,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 
-from api.routes import chat, memory
+from api.routes import chat, memory, auth
 from core.placement import PlacementEngine
 from core.retrieval import HybridRetriever
 from core.scheduler import MemoryScheduler, SchedulerState
@@ -142,8 +142,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Routes ───────────────────────────────────────────────────────────────────
-app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+# ── Routes ───────────────────────────────────────────────────────────────────# Mount Routes
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
 
 

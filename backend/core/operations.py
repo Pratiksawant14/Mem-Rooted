@@ -63,6 +63,7 @@ async def add_node(
     node_type: NodeType,
     parent_id: Optional[uuid.UUID],
     embedding: Optional[list[float]],
+    user_id: str,
     session_id: Optional[uuid.UUID] = None,
     priority: PriorityFlag = PriorityFlag.MEDIUM,
 ) -> OperationResult:
@@ -101,6 +102,7 @@ async def add_node(
         lateral_links=[],
         embedding=embedding,
         source_session_id=session_id,
+        user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
         priority_flag=priority,
         operation_log=[_log_entry("ADD", {"initial_type": node_type.value})],
         is_archived=False,
@@ -129,6 +131,22 @@ async def update_node(
     node = result.scalar_one_or_none()
     if not node:
         return OperationResult(operation_type="UPDATE", success=False, message="Node not found")
+
+    if node.node_type == NodeType.ANCHOR and node.priority_flag == PriorityFlag.IMMUTABLE:
+        log = list(node.operation_log or [])
+        log.append(_log_entry("BLOCKED_UPDATE", {
+            "attempted_new_content": new_content,
+            "reason": "IMMUTABLE anchor protection"
+        }))
+        node.operation_log = log
+        node.recall_weight = (node.recall_weight or 0.0) + 1.0
+        node.last_recalled_at = _now()
+        await db.flush()
+        return OperationResult(
+            operation_type="BLOCKED_UPDATE",
+            success=False,
+            message="Cannot mutate IMMUTABLE ANCHOR node content. Attempted change logged to history."
+        )
 
     old_content = node.content
     log = list(node.operation_log or [])
@@ -515,6 +533,7 @@ async def split_node(
         lateral_links=[],
         embedding=node.embedding,  # inherit parent embedding initially
         source_session_id=node.source_session_id,
+        user_id=node.user_id,
         priority_flag=node.priority_flag,
         operation_log=[_log_entry("SPLIT", {"origin": str(node_id), "group": "A"})],
         is_archived=False,
@@ -534,6 +553,7 @@ async def split_node(
         lateral_links=[],
         embedding=node.embedding,
         source_session_id=node.source_session_id,
+        user_id=node.user_id,
         priority_flag=node.priority_flag,
         operation_log=[_log_entry("SPLIT", {"origin": str(node_id), "group": "B"})],
         is_archived=False,

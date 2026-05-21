@@ -22,10 +22,19 @@ from core.extraction import CandidateType, ExtractionResult, MemoryCandidate, ex
 from core.operations import add_node, create_lateral_link, noop, update_node
 from core.placement import PlacementEngine
 from core.retrieval import HybridRetriever, RetrievalResult
+from core.placement import PlacementEngine
+from core.retrieval import HybridRetriever, RetrievalResult
 from db.connection import get_session
 from db.models import Message, Node, NodeType, Session
+from api.routes.auth import get_current_user_id
 
 logger = logging.getLogger(__name__)
+
+def is_additive_fact(new_content: str, old_content: str) -> bool:
+    """Heuristic to determine if a new fact is additive rather than a replacement."""
+    add_markers = ["also", "another", "too", "as well", "additionally"]
+    new_lower = new_content.lower()
+    return any(marker in new_lower for marker in add_markers)
 
 router = APIRouter()
 
@@ -108,15 +117,21 @@ def _build_context_prompt(retrieval: RetrievalResult) -> str:
     return "\n".join(parts)
 
 
-async def _get_or_create_session(db: AsyncSession, session_id: str) -> Session:
-    """Get existing session or create a new one."""
-    sid = uuid.UUID(session_id)
-    result = await db.execute(select(Session).where(Session.id == sid))
+async def _get_or_create_session(db: AsyncSession, sid: str, user_id: str) -> Session:
+    """Retrieve existing session or create a new one."""
+    try:
+        session_uuid = uuid.UUID(sid)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session_id format (must be UUID)")
+
+    result = await db.execute(select(Session).where(Session.id == session_uuid))
     session = result.scalar_one_or_none()
+
     if not session:
-        session = Session(id=sid)
+        session = Session(id=session_uuid, user_id=uuid.UUID(user_id))
         db.add(session)
-        await db.flush()
+        await db.commit()
+        await db.refresh(session)
     return session
 
 
@@ -137,7 +152,11 @@ async def _get_last_messages(db: AsyncSession, session_id: str, count: int = 3) 
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.post("/message", response_model=ChatResponse)
-async def send_message(body: ChatRequest, request: Request):
+async def send_message(
+    body: ChatRequest,
+    request: Request,
+    user_id: str = Depends(get_current_user_id)
+):
     """
     Full Mem-Rooted pipeline per message:
     1. Extract → 2. Gate → 3. Embed → 4. Place+Operate →
@@ -149,8 +168,8 @@ async def send_message(body: ChatRequest, request: Request):
     emb_model = request.app.state.embedding_model
 
     async with get_session() as db:
-        session = await _get_or_create_session(db, body.session_id)
-        session_uuid = uuid.UUID(body.session_id)
+        session = await _get_or_create_session(db, body.session_id, user_id)
+        session_uuid = session.id
 
         # ── 1. Extract ───────────────────────────────────────────────────
         extraction: ExtractionResult = await extract_memories(body.message)
@@ -174,8 +193,13 @@ async def send_message(body: ChatRequest, request: Request):
             embedded_candidates.append((cand, vec.tolist()))
 
         # ── 4. Place + Operate ───────────────────────────────────────────
-        # Load all active nodes for placement comparison
-        all_nodes_result = await db.execute(select(Node).where(Node.is_archived == False))
+        # Load all active nodes for placement comparison FOR THIS USER ONLY
+        all_nodes_result = await db.execute(
+            select(Node).where(
+                Node.is_archived == False,
+                Node.user_id == uuid.UUID(user_id)
+            )
+        )
         all_db_nodes = list(all_nodes_result.scalars().all())
         all_nodes_dicts = []
         for n in all_db_nodes:
@@ -203,6 +227,7 @@ async def send_message(body: ChatRequest, request: Request):
                 all_nodes=all_nodes_dicts,
                 graph=graph,
                 db=db,
+                user_id=user_id,
             )
 
             # Check for semantically similar existing node (cosine > 0.88)
@@ -210,6 +235,14 @@ async def send_message(body: ChatRequest, request: Request):
             best_match_sim = 0.0
             best_match_content = ""
             for nd in all_nodes_dicts:
+                # 1. Exact Name Match (Highest priority for structured extraction)
+                if cand.name and nd.get("name") and cand.name.strip().lower() == nd.get("name").strip().lower():
+                    best_match_sim = 1.0
+                    best_match_id = nd["id"]
+                    best_match_content = nd.get("content", "")
+                    break
+                    
+                # 2. Semantic Embedding Match (Fallback)
                 nd_emb = nd.get("embedding")
                 if nd_emb is None:
                     continue
@@ -219,12 +252,43 @@ async def send_message(body: ChatRequest, request: Request):
                     best_match_id = nd["id"]
                     best_match_content = nd.get("content", "")
 
-            if best_match_sim > 0.88 and best_match_id:
+            threshold = 0.60 if node_type.value == "ANCHOR" else 0.65
+            if best_match_sim > threshold and best_match_id:
                 # Existing node found — noop or update
                 content_differs = cand.content.strip().lower() != best_match_content.strip().lower()
                 if content_differs:
-                    await update_node(db, uuid.UUID(best_match_id), cand.content)
-                    logger.info(f"[Chat] Updated existing node {best_match_id[:8]} (sim={best_match_sim:.3f})")
+                    if is_additive_fact(cand.content, best_match_content):
+                        # Treat as ADD — create new sibling node, do not update existing
+                        parent_uuid = uuid.UUID(place_result.parent_id) if place_result.parent_id else None
+                        op_result = await add_node(
+                            db=db,
+                            name=cand.name if cand.name else cand.content[:80],
+                            content=cand.content,
+                            node_type=node_type,
+                            parent_id=parent_uuid,
+                            embedding=cand_emb,
+                            user_id=user_id,
+                            session_id=session_uuid,
+                        )
+                        logger.info(f"[Chat] Additive fact detected: added new node instead of updating {best_match_id[:8]}")
+                    else:
+                        # genuine update/contradiction
+                        op_result = await update_node(db, uuid.UUID(best_match_id), cand.content)
+                        if not op_result.success and op_result.operation_type == "BLOCKED_UPDATE":
+                            fallback_name = f"Update: {cand.name}" if cand.name else "Identity Update"
+                            await add_node(
+                                db=db,
+                                name=fallback_name[:50],
+                                content=cand.content,
+                                node_type=NodeType.INSTANCE,
+                                parent_id=uuid.UUID(best_match_id),
+                                embedding=cand_emb,
+                                user_id=user_id,
+                                session_id=session_uuid,
+                            )
+                            logger.info(f"[Chat] Fallback: Created INSTANCE child under IMMUTABLE node {best_match_id[:8]}")
+                        else:
+                            logger.info(f"[Chat] Updated existing node {best_match_id[:8]} (sim={best_match_sim:.3f})")
                 else:
                     await noop(db, uuid.UUID(best_match_id))
                     logger.info(f"[Chat] NOOP on existing node {best_match_id[:8]} (sim={best_match_sim:.3f})")
@@ -233,11 +297,12 @@ async def send_message(body: ChatRequest, request: Request):
                 parent_uuid = uuid.UUID(place_result.parent_id) if place_result.parent_id else None
                 op_result = await add_node(
                     db=db,
-                    name=cand.content[:80],
+                    name=cand.name if cand.name else cand.content[:80],
                     content=cand.content,
                     node_type=node_type,
                     parent_id=parent_uuid,
                     embedding=cand_emb,
+                    user_id=user_id,
                     session_id=session_uuid,
                 )
                 logger.info(
@@ -281,6 +346,7 @@ async def send_message(body: ChatRequest, request: Request):
             query=body.message,
             db=db,
             graph=graph,
+            user_id=user_id,
             session_id=body.session_id,
         )
         logger.info(
@@ -333,7 +399,7 @@ async def send_message(body: ChatRequest, request: Request):
         async def _preload():
             try:
                 async with get_session() as preload_db:
-                    await retriever.preload_next_scene(last_msgs, graph, preload_db, body.session_id)
+                    await retriever.preload_next_scene(last_msgs, graph, preload_db, user_id, body.session_id)
             except Exception as e:
                 logger.warning(f"[Chat] Preload failed: {e}")
 
@@ -344,12 +410,14 @@ async def send_message(body: ChatRequest, request: Request):
             session_id=session_uuid,
             role="user",
             content=body.message,
+            user_id=uuid.UUID(user_id),
             node_ids_used=[],
         )
         assistant_msg = Message(
             session_id=session_uuid,
             role="assistant",
             content=assistant_text,
+            user_id=uuid.UUID(user_id),
             node_ids_used=retrieval.nodes_used_ids,
         )
         db.add(user_msg)
@@ -377,11 +445,11 @@ async def send_message(body: ChatRequest, request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/sessions")
-async def list_sessions():
-    """List all conversation sessions."""
+async def list_sessions(user_id: str = Depends(get_current_user_id)):
+    """List all conversation sessions for the user."""
     async with get_session() as db:
         result = await db.execute(
-            select(Session).order_by(Session.started_at.desc()).limit(50)
+            select(Session).where(Session.user_id == uuid.UUID(user_id)).order_by(Session.started_at.desc()).limit(50)
         )
         sessions = result.scalars().all()
         return [
@@ -400,12 +468,18 @@ async def list_sessions():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str):
-    """Get all messages for a session in chronological order."""
+async def get_session_messages(session_id: str, user_id: str = Depends(get_current_user_id)):
+    """Get history for a specific session."""
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session_id format")
+
     async with get_session() as db:
         result = await db.execute(
             select(Message)
-            .where(Message.session_id == uuid.UUID(session_id))
+            .where(Message.session_id == session_uuid)
+            .where(Message.user_id == uuid.UUID(user_id))
             .order_by(Message.created_at.asc())
         )
         messages = result.scalars().all()

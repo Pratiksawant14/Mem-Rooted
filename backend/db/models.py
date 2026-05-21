@@ -50,6 +50,31 @@ class PriorityFlag(str, enum.Enum):
     LOW = "LOW"
 
 
+# ── User Model ────────────────────────────────────────────────────────────────
+
+class User(Base):
+    """A user of the Mem-Rooted system."""
+
+    __tablename__ = "users"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
+    )
+    username = Column(String(255), unique=True, nullable=False, index=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    # Relationships
+    nodes = relationship("Node", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
+
+
 # ── Node Model ────────────────────────────────────────────────────────────────
 
 class Node(Base):
@@ -76,6 +101,12 @@ class Node(Base):
         index=True,
     )
     content = Column(Text, nullable=False)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # ── Hierarchy ─────────────────────────────────────────────────────────────
     parent_id = Column(
@@ -182,6 +213,7 @@ class Node(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    user = relationship("User", back_populates="nodes")
 
     def __repr__(self) -> str:
         return (
@@ -204,6 +236,12 @@ class Session(Base):
         default=uuid.uuid4,
         nullable=False,
     )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     started_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -212,6 +250,8 @@ class Session(Base):
     ended_at = Column(DateTime(timezone=True), nullable=True)
     message_count = Column(Integer, nullable=False, default=0)
     summary = Column(Text, nullable=True)
+
+    user = relationship("User", back_populates="sessions")
 
     def __repr__(self) -> str:
         return f"<Session(id={self.id!s:.8}, messages={self.message_count})>"
@@ -242,6 +282,12 @@ class Message(Base):
         comment="user | assistant | system",
     )
     content = Column(Text, nullable=False)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -261,6 +307,7 @@ class Message(Base):
 # Composite index for active node retrieval (non-archived, by type)
 Index(
     "ix_nodes_active_by_type",
+    Node.user_id,
     Node.node_type,
     Node.is_archived,
     Node.composite_weight.desc(),
@@ -269,6 +316,7 @@ Index(
 # Index for decay scanning (background job)
 Index(
     "ix_nodes_decay_scan",
+    Node.user_id,
     Node.is_archived,
     Node.decay_score,
     Node.node_type,

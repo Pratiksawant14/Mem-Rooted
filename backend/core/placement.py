@@ -297,6 +297,7 @@ class PlacementEngine:
         anchor_nodes: list[dict],
         db: AsyncSession,
         graph: MemoryGraph,
+        user_id: str,
     ) -> Optional[str]:
         """
         Create a new DOMAIN node when no suitable parent exists for a CLUSTER.
@@ -332,6 +333,7 @@ class PlacementEngine:
             node_type=NodeType.DOMAIN,
             parent_id=parent_uuid,
             embedding=candidate_embedding,
+            user_id=user_id,
             priority=PriorityFlag.HIGH,
         )
 
@@ -359,16 +361,25 @@ class PlacementEngine:
         new_embedding: Optional[list[float]],
         existing_node: dict,
         threshold: float = 0.6,
+        new_node_type: str = "INSTANCE",
     ) -> str:
         """
-        Decide depth placement during CLUSTER placement.
-
-        Returns:
-            "child"   — if cosine sim > threshold (new node goes under existing_node)
-            "sibling" — if below threshold (new node shares existing_node's parent)
+        Decide depth placement during CLUSTER/INSTANCE placement.
+        Enforces strict hierarchy: lower tiers MUST be children of higher tiers.
         """
+        existing_type = existing_node.get("node_type", "INSTANCE")
+        tier_map = {"ANCHOR": 0, "DOMAIN": 1, "CLUSTER": 2, "INSTANCE": 3}
+        
+        new_tier = tier_map.get(new_node_type, 3)
+        existing_tier = tier_map.get(existing_type, 3)
+        
+        # Strict hierarchy rule: if candidate is a lower tier (higher number) 
+        # than the existing node, it MUST become a child.
+        if new_tier > existing_tier:
+            return "child"
+
         if new_embedding is None:
-            return "child"  # default to child when no embedding
+            return "child"
 
         existing_emb = existing_node.get("embedding")
         sim = _cosine_sim(new_embedding, existing_emb)
@@ -390,6 +401,7 @@ class PlacementEngine:
         all_nodes: list[dict],
         graph: MemoryGraph,
         db: AsyncSession,
+        user_id: str,
     ) -> PlacementResult:
         """
         Orchestrate the full placement pipeline:
@@ -417,7 +429,7 @@ class PlacementEngine:
         if parent_id == "__CREATE_DOMAIN__":
             anchor_nodes = [n for n in all_nodes if n.get("node_type") == "ANCHOR" and not n.get("is_archived")]
             new_domain_id = await self.create_domain_node(
-                candidate_content, candidate_embedding, anchor_nodes, db, graph
+                candidate_content, candidate_embedding, anchor_nodes, db, graph, user_id
             )
             if new_domain_id:
                 result.parent_id = new_domain_id
@@ -441,7 +453,7 @@ class PlacementEngine:
             logger.info("INSTANCE reclassified as CLUSTER — re-running placement")
             return await self.run_placement(
                 candidate_content, "CLUSTER", candidate_embedding,
-                all_nodes, graph, db
+                all_nodes, graph, db, user_id
             )
 
         # ── Step 2: Sibling vs child (for CLUSTER placement) ─────────────
@@ -450,7 +462,7 @@ class PlacementEngine:
             parent_node = node_map.get(parent_id)
             if parent_node:
                 depth_decision = self.should_create_sibling_vs_child(
-                    candidate_embedding, parent_node
+                    candidate_embedding, parent_node, new_node_type=ctype
                 )
                 if depth_decision == "sibling":
                     # Go to parent's parent instead

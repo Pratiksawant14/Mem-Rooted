@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import ChatInterface from "@/components/chat/ChatInterface";
 import TransparencyPanel from "@/components/memory/TransparencyPanel";
 
@@ -14,6 +15,27 @@ export default function Home() {
     channels_used: string[];
     nodes_used: string[];
   } | null>(null);
+  
+  const router = useRouter();
+  const [username, setUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    const userId = localStorage.getItem("mem_user_id");
+    const uname = localStorage.getItem("mem_username");
+    if (!userId) {
+      router.push("/login");
+    } else {
+      setUsername(uname);
+    }
+  }, [router]);
+
+  if (!username) return null; // Wait for redirect or load
+
+  const handleLogout = () => {
+    localStorage.removeItem("mem_user_id");
+    localStorage.removeItem("mem_username");
+    router.push("/login");
+  };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
@@ -23,6 +45,8 @@ export default function Home() {
         style={{ width: panelOpen ? "60%" : "100%" }}
       >
         <ChatInterface
+          username={username}
+          onLogout={handleLogout}
           onTransparencyUpdate={setLastTransparency}
         />
       </div>
@@ -55,23 +79,7 @@ export default function Home() {
           Memory
         </button>
       )}
-
-      {/* Dashboard link */}
-      <Link
-        href="/dashboard"
-        className="fixed bottom-6 left-6 z-50 flex items-center gap-2 px-4 py-2.5
-                   rounded-xl bg-surface border border-border text-text-secondary text-sm font-medium
-                   hover:bg-surface-elevated hover:text-primary hover:border-primary/40
-                   shadow-lg shadow-black/30 transition-all group"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="3" width="7" height="7" rx="1" />
-          <rect x="14" y="3" width="7" height="7" rx="1" />
-          <rect x="3" y="14" width="7" height="7" rx="1" />
-          <rect x="14" y="14" width="7" height="7" rx="1" />
-        </svg>
-        Dashboard
-      </Link>
+      )}
     </div>
   );
 }

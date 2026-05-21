@@ -34,16 +34,18 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class CandidateType(str, Enum):
-    """The four hierarchical node roles."""
+    """The hierarchical node roles, plus NOISE for filtering."""
     ANCHOR = "ANCHOR"
     DOMAIN = "DOMAIN"
     CLUSTER = "CLUSTER"
     INSTANCE = "INSTANCE"
+    NOISE = "NOISE"
 
 
 class MemoryCandidate(BaseModel):
     """A single structured memory candidate extracted from a user message."""
     content: str = Field(..., description="The atomic fact extracted")
+    name: Optional[str] = Field(default=None, description="Short 2-4 word title for the fact")
     candidate_type: CandidateType = Field(..., description="ANCHOR / DOMAIN / CLUSTER / INSTANCE")
     confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Extraction confidence")
     entities: list[str] = Field(default_factory=list, description="Named entities found")
@@ -377,14 +379,15 @@ For each fact, classify it into exactly one type:
 - ANCHOR: Immutable identity facts. Name, nationality, core beliefs, permanent traits, gender, religion. Things that define WHO the person IS and will not change.
 - DOMAIN: Major life directions. Career field, area of study, health goals, major hobbies, long-term projects. These are broad life themes.
 - CLUSTER: Specific knowledge areas within a domain. A particular technology they're learning, a specific exercise routine, a sub-project, a course they're taking.
-- INSTANCE: Ephemeral, time-bound facts from this moment. What they did today, how they're feeling right now, a temporary situation.
+- INSTANCE: Specific events or accomplishments that tie back to a long-term domain/cluster (e.g., "I ran 5 miles today" ties to a running habit, "I just shipped the new React feature" ties to their job). DO NOT use this for meaningless temporary actions like getting coffee or taking a break.
 
 Rules:
 1. Extract ONLY declarative facts. Skip questions entirely.
-2. Each fact should be ONE atomic statement — not compound.
-3. Assign confidence 0.0–1.0 based on how certain you are about the classification.
-4. If the message contains no storable facts, return an empty facts array.
-5. Prefer higher-tier classifications when evidence is strong (e.g., "my name is X" is clearly ANCHOR, not INSTANCE).
+2. Each fact should be ONE single atomic statement. Break compound sentences into completely separate facts.
+3. Provide a short 2-4 word `name` for each fact. For ANCHOR facts, use strictly generic categories WITHOUT the specific value (e.g., "User Name", "User Origin", "Career Goal").
+4. Assign confidence 0.0–1.0 based on how certain you are about the classification.
+5. STRICT NOISE FILTER: Set `is_storable` to `false` if the statement is ephemeral conversational noise, meaningless actions, or temporary states that have no long-term memory value (e.g., "I'm getting coffee", "I'll be right back"). Set it to `true` ONLY if the fact is worth remembering permanently.
+6. Prefer higher-tier classifications when evidence is strong (e.g., "my name is X" is clearly ANCHOR, not INSTANCE).
 """
 
 _EXTRACTION_JSON_SCHEMA = {
@@ -402,16 +405,24 @@ _EXTRACTION_JSON_SCHEMA = {
                             "type": "string",
                             "description": "The atomic fact extracted from the message",
                         },
+                        "name": {
+                            "type": "string",
+                            "description": "Short 2-4 word title for the fact",
+                        },
                         "candidate_type": {
                             "type": "string",
                             "enum": ["ANCHOR", "DOMAIN", "CLUSTER", "INSTANCE"],
+                        },
+                        "is_storable": {
+                            "type": "boolean",
+                            "description": "True if this fact is worth remembering long-term. False if it is conversational filler, ephemeral (getting coffee), or meaningless.",
                         },
                         "confidence": {
                             "type": "number",
                             "description": "Classification confidence 0.0–1.0",
                         },
                     },
-                    "required": ["content", "candidate_type", "confidence"],
+                    "required": ["content", "name", "candidate_type", "confidence"],
                     "additionalProperties": False,
                 },
             },
@@ -455,8 +466,13 @@ async def run_stage2(message: str) -> list[MemoryCandidate]:
 
         candidates: list[MemoryCandidate] = []
         for fact in facts:
+            if not fact.get("is_storable", True):
+                logger.info(f"[Extraction] LLM correctly identified NOISE (is_storable=False), dropping fact: {fact['content']}")
+                continue
+                
             candidates.append(MemoryCandidate(
                 content=fact["content"],
+                name=fact.get("name"),
                 candidate_type=CandidateType(fact["candidate_type"]),
                 confidence=max(0.0, min(1.0, fact["confidence"])),
                 entities=[],
@@ -492,7 +508,10 @@ def _merge_candidates(
     - Stage 1 candidates with no LLM match are kept with reduced confidence.
     """
     if not stage2_candidates:
-        return stage1_candidates
+        # If the LLM returned empty, it explicitly decided the message is noise/un-storable.
+        # We must respect the LLM's decision and drop Stage 1 candidates too.
+        logger.info("[Extraction] LLM returned no facts — discarding Stage 1 candidates as noise.")
+        return []
     if not stage1_candidates:
         return stage2_candidates
 
@@ -530,6 +549,7 @@ def _merge_candidates(
                 boosted_confidence = min(0.95, max(llm_cand.confidence, rule_cand.confidence) * 1.2)
                 merged.append(MemoryCandidate(
                     content=llm_cand.content,
+                    name=llm_cand.name,
                     candidate_type=llm_cand.candidate_type,
                     confidence=round(boosted_confidence, 3),
                     entities=merged_entities,
@@ -543,6 +563,7 @@ def _merge_candidates(
                 capped_confidence = min(0.6, llm_cand.confidence)
                 merged.append(MemoryCandidate(
                     content=llm_cand.content,
+                    name=llm_cand.name,
                     candidate_type=llm_cand.candidate_type,
                     confidence=round(capped_confidence, 3),
                     entities=merged_entities,
@@ -597,10 +618,7 @@ async def extract_memories(message: str) -> ExtractionResult:
     stage2_candidates = await run_stage2(message)
 
     # ── Merge ────────────────────────────────────────────────────────────
-    if stage2_candidates:
-        result.candidates = _merge_candidates(stage1_candidates, stage2_candidates)
-    else:
-        # LLM failed or returned nothing — fall back to Stage 1 only
-        result.candidates = stage1_candidates
+    # Unconditionally merge. If the LLM returned [], _merge_candidates will correctly drop Stage 1 candidates as noise.
+    result.candidates = _merge_candidates(stage1_candidates, stage2_candidates)
 
     return result

@@ -10,7 +10,7 @@ import uuid
 from collections import defaultdict
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from core.retrieval import HybridRetriever
 from core.scheduler import SchedulerState
 from db.connection import get_session
 from db.models import Node, NodeType, PriorityFlag
+from api.routes.auth import get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +84,14 @@ def _build_tree(nodes: list[Node]) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/tree")
-async def get_memory_tree():
+async def get_memory_tree(user_id: str = Depends(get_current_user_id)):
     """
     Full node tree as nested JSON.
     ANCHOR nodes at root, children nested recursively.
     """
     async with get_session() as db:
         result = await db.execute(
-            select(Node).where(Node.is_archived == False).order_by(Node.tier_level.asc())
+            select(Node).where(Node.is_archived == False, Node.user_id == uuid.UUID(user_id)).order_by(Node.tier_level.asc())
         )
         nodes = list(result.scalars().all())
         tree = _build_tree(nodes)
@@ -102,10 +103,10 @@ async def get_memory_tree():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/node/{node_id}")
-async def get_node_detail(node_id: str):
+async def get_node_detail(node_id: str, user_id: str = Depends(get_current_user_id)):
     """Full node details including complete operation_log history."""
     async with get_session() as db:
-        result = await db.execute(select(Node).where(Node.id == uuid.UUID(node_id)))
+        result = await db.execute(select(Node).where(Node.id == uuid.UUID(node_id), Node.user_id == uuid.UUID(user_id)))
         node = result.scalar_one_or_none()
 
         if not node:
@@ -149,7 +150,7 @@ async def get_node_detail(node_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/stats")
-async def get_memory_stats():
+async def get_memory_stats(user_id: str = Depends(get_current_user_id)):
     """
     Aggregate statistics:
     - Total nodes by type
@@ -163,13 +164,13 @@ async def get_memory_stats():
         type_counts = {}
         for nt in NodeType:
             count_result = await db.execute(
-                select(func.count()).where(Node.node_type == nt, Node.is_archived == False)
+                select(func.count()).where(Node.node_type == nt, Node.is_archived == False, Node.user_id == uuid.UUID(user_id))
             )
             type_counts[nt.value] = count_result.scalar() or 0
 
         # Archived count
         archived_result = await db.execute(
-            select(func.count()).where(Node.is_archived == True)
+            select(func.count()).where(Node.is_archived == True, Node.user_id == uuid.UUID(user_id))
         )
         archived_count = archived_result.scalar() or 0
 
@@ -178,7 +179,7 @@ async def get_memory_stats():
         for tier in range(4):
             avg_result = await db.execute(
                 select(func.avg(Node.decay_score)).where(
-                    Node.tier_level == tier, Node.is_archived == False
+                    Node.tier_level == tier, Node.is_archived == False, Node.user_id == uuid.UUID(user_id)
                 )
             )
             avg = avg_result.scalar()
@@ -188,7 +189,7 @@ async def get_memory_stats():
         # Top 5 by composite weight
         top_cw_result = await db.execute(
             select(Node)
-            .where(Node.is_archived == False)
+            .where(Node.is_archived == False, Node.user_id == uuid.UUID(user_id))
             .order_by(Node.composite_weight.desc())
             .limit(5)
         )
@@ -201,7 +202,7 @@ async def get_memory_stats():
         # Top 5 by recall weight
         top_rw_result = await db.execute(
             select(Node)
-            .where(Node.is_archived == False)
+            .where(Node.is_archived == False, Node.user_id == uuid.UUID(user_id))
             .order_by(Node.recall_weight.desc())
             .limit(5)
         )
@@ -288,13 +289,13 @@ async def trigger_scheduler_job(job_name: str, request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.delete("/node/{node_id}")
-async def archive_node_endpoint(node_id: str):
+async def archive_node_endpoint(node_id: str, user_id: str = Depends(get_current_user_id)):
     """
     Soft-archive a node (set is_archived=True). Never hard deletes.
     Blocks if node is ANCHOR with IMMUTABLE priority.
     """
     async with get_session() as db:
-        result = await db.execute(select(Node).where(Node.id == uuid.UUID(node_id)))
+        result = await db.execute(select(Node).where(Node.id == uuid.UUID(node_id), Node.user_id == uuid.UUID(user_id)))
         node = result.scalar_one_or_none()
 
         if not node:
@@ -324,7 +325,7 @@ async def archive_node_endpoint(node_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/search")
-async def search_memories(request: Request, q: str = Query(..., min_length=2)):
+async def search_memories(request: Request, q: str = Query(..., min_length=2), user_id: str = Depends(get_current_user_id)):
     """
     Run full hybrid retrieval on query string.
     Returns nodes with content previews for dashboard search.
@@ -337,6 +338,7 @@ async def search_memories(request: Request, q: str = Query(..., min_length=2)):
             query=q,
             db=db,
             graph=graph,
+            user_id=user_id,
         )
 
         # Combine all result nodes into a search results list
